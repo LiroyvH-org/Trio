@@ -112,7 +112,7 @@ struct PumpView: View {
         HStack {
             Image(systemName: hourglassIcon)
                 .font(.callout)
-                .foregroundStyle(timerColor, Color.yellow)
+                .foregroundStyle(timerColor, timerColorSecondary)
                 .symbolRenderingMode(.palette)
 
             let remainingTimeString = isExpiration ?
@@ -226,6 +226,14 @@ struct PumpView: View {
         default:
             return Color.loopGreen
         }
+    }
+
+    private var timerColorSecondary: Color {
+        if activatedAtDate != nil {
+            return Color.gray
+        }
+
+        return Color.yellow
     }
 }
 
