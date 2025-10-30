@@ -53,7 +53,10 @@ struct WatchConfigGarminAppConfigView: View {
                             ).buttonStyle(BorderlessButtonStyle())
                         }.padding(.top)
                         Spacer()
-                        Toggle("Enable Watchface Data", isOn: $state.garminSettings.isWatchfaceDataEnabled)
+                        Toggle("Disable Watchface Data", isOn: Binding(
+                            get: { !state.garminSettings.isWatchfaceDataEnabled },
+                            set: { state.garminSettings.isWatchfaceDataEnabled = !$0 }
+                        ))
                             .disabled(state.isWatchfaceDataCooldownActive)
 
                         // Display cooldown warning when toggle is locked
@@ -213,7 +216,7 @@ struct WatchConfigGarminAppConfigView: View {
             SettingInputHintView(
                 hintDetent: $hintDetent,
                 shouldDisplayHint: $shouldDisplayHint2,
-                hintLabel: "Enable/disable watchface data transmission",
+                hintLabel: "Disable watchface data transmission",
                 hintText: Text(
                     "Important: If you want to use a different watchface on your Garmin device that has no data requirement from this app, disable data transmission to the Garmin watchface app! Otherwise you will not be able to get current data once you re-enable the supported watchface that shows Trio data and you will have to re-install it on your Garmin device.\n\n" +
                         "Note: When switching between supported watchfaces, data transmission is automatically disabled for 20 seconds. You would manually need to re-enable it."
