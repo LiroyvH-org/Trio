@@ -88,6 +88,9 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
     /// Enable/disable general Garmin debug logging (connections, settings, throttling, etc.)
     private let debugGarmin = true // Set to false to disable verbose Garmin logging
 
+    /// Track when we last sent to determination subject to prevent duplicate cached data
+    private var lastDeterminationSendTime: Date?
+
     /// Enable simulated Garmin device for Xcode Simulator testing
     /// When true, creates a fake Garmin device so you can test the workflow in Simulator
     #if targetEnvironment(simulator)
@@ -105,6 +108,10 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
     /// Track when immediate sends happen to cancel throttled ones
     private var lastImmediateSendTime: Date?
     private var throttledUpdatePending = false
+
+    /// Track last sent data hash to prevent duplicate sends
+    private var lastSentDataHash: Int?
+    private let lastSentHashLock = NSLock()
 
     /// Cache last determination data to avoid CoreData staleness on immediate sends
     private var cachedDeterminationData: Data?
@@ -356,8 +363,29 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
                 Task {
                     do {
                         let watchState = try await self.setupGarminWatchState(triggeredBy: "Determination")
+
+                        // Check if preparation was skipped due to unchanged data
+                        self.hashLock.lock()
+                        let currentHash = self.lastPreparedDataHash
+                        let wasCached = (watchState == self.lastPreparedWatchState)
+                        self.hashLock.unlock()
+
+                        // If data came from cache AND we recently sent it to the subject, skip
+                        if wasCached {
+                            if let lastSend = self.lastDeterminationSendTime,
+                               Date().timeIntervalSince(lastSend) < 3
+                            {
+                                self
+                                    .debugGarmin(
+                                        "[\(self.formatTimeForLog())] Skipping duplicate determination trigger - already in pipeline (hash: \(currentHash ?? 0))"
+                                    )
+                                return
+                            }
+                        }
+
                         let watchStateData = try JSONEncoder().encode(watchState)
                         self.currentSendTrigger = "Determination"
+                        self.lastDeterminationSendTime = Date() // Track when we sent to subject
                         // Send to subject for additional 2s debouncing before Bluetooth transmission
                         self.determinationSubject.send(watchStateData)
                     } catch {
@@ -525,11 +553,8 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
 
             // Hash IOB (changes frequently with insulin activity)
             if let iob = iobService.currentIOB {
-                let iobDouble = Double(iob)
-                if iobDouble.isFinite, !iobDouble.isNaN {
-                    let iobRounded = iobDouble.roundedDouble(toPlaces: 1)
-                    hasher.combine(iobRounded)
-                }
+                let iobValue = validateIOB(iob)
+                hasher.combine(iobValue)
             }
 
             // Hash latest determination data (includes COB, ISF, eventualBG, sensRatio)
@@ -542,33 +567,21 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
             if let determination = determinationObjects.first {
                 await backgroundContext.perform {
                     // Hash COB (rounded to integer)
-                    let cobDouble = Double(determination.cob)
-                    if cobDouble.isFinite, !cobDouble.isNaN, cobDouble >= -32768, cobDouble <= 32767 {
-                        let cobInt = Int16(cobDouble)
-                        hasher.combine(cobInt)
-                    }
+                    let cobValue = self.validateCOB(determination.cob)
+                    hasher.combine(Int16(cobValue))
 
                     // Hash sensRatio with 2 decimal precision
-                    if let sensRatio = determination.sensitivityRatio {
-                        let sensRatioDouble = Double(truncating: sensRatio as NSNumber)
-                        if sensRatioDouble.isFinite, !sensRatioDouble.isNaN, sensRatioDouble > 0 {
-                            let sensRounded = sensRatioDouble.roundedDouble(toPlaces: 2)
-                            hasher.combine(sensRounded)
-                        }
-                    }
+                    let sensValue = self.validateSensRatio(determination.sensitivityRatio)
+                    hasher.combine(sensValue)
 
                     // Hash ISF (insulinSensitivity)
-                    if let isf = determination.insulinSensitivity as? Int16 {
-                        if isf > 0, isf <= 300 {
-                            hasher.combine(isf)
-                        }
+                    if let isf = self.validateISF(determination.insulinSensitivity) {
+                        hasher.combine(isf)
                     }
 
                     // Hash eventualBG
-                    if let eventualBG = determination.eventualBG as? Int16 {
-                        if eventualBG >= 0, eventualBG <= 500 {
-                            hasher.combine(eventualBG)
-                        }
+                    if let eventualBG = self.validateEventualBG(determination.eventualBG) {
+                        hasher.combine(eventualBG)
                     }
                 }
             }
@@ -678,9 +691,7 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
                 let unitsHint = self.units == .mgdL ? "mgdl" : "mmol"
 
                 // Calculate IOB with 1 decimal precision using helper function
-                let iobDecimal = self.iobService.currentIOB ?? 0
-                let iobDouble = Double(iobDecimal)
-                let iobValue = iobDouble.isFinite && !iobDouble.isNaN ? iobDouble.roundedDouble(toPlaces: 1) : 0.0
+                let iobValue = self.validateIOB(self.iobService.currentIOB ?? Decimal(0))
 
                 // Calculate COB, sensRatio, ISF, eventualBG, TBR from determination
                 var cobValue: Double?
@@ -690,66 +701,28 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
                 var tbrValue: Double?
 
                 if let latestDetermination = determinationObjects.first {
-                    // Safe COB conversion - round to integer (0 decimals)
-                    let cobDouble = Double(latestDetermination.cob)
-                    if cobDouble.isFinite, !cobDouble.isNaN {
-                        cobValue = cobDouble.roundedDouble(toPlaces: 0)
-                    } else {
-                        cobValue = nil
-                        if self.debugWatchState {
-                            debug(.watchManager, "⌚️ COB is NaN or infinite, excluding from data")
-                        }
+                    // Safe COB conversion using helper
+                    cobValue = self.validateCOB(latestDetermination.cob)
+                    if cobValue == 0, self.debugWatchState {
+                        debug(.watchManager, "⌚️ COB is invalid or 0")
                     }
 
-                    // Always calculate sensRatio (watchface decides whether to display it)
-                    // Format to 2 decimal places
-                    if let sensRatio = latestDetermination.sensitivityRatio {
-                        let sensRatioDouble = Double(truncating: sensRatio as NSNumber)
-                        if sensRatioDouble.isFinite, !sensRatioDouble.isNaN, sensRatioDouble > 0 {
-                            sensRatioValue = sensRatioDouble.roundedDouble(toPlaces: 2)
-                        } else {
-                            // Invalid ratio - default to 1.0 (no adjustment)
-                            sensRatioValue = 1.0
-                            if self.debugWatchState {
-                                debug(.watchManager, "⌚️ SensRatio is NaN or infinite, using default 1.0")
-                            }
-                        }
-                    } else {
-                        // Nil ratio - default to 1.0 (no adjustment)
-                        sensRatioValue = 1.0
+                    // Calculate sensRatio using helper (returns 1.0 if invalid)
+                    sensRatioValue = self.validateSensRatio(latestDetermination.sensitivityRatio)
+                    if sensRatioValue == 1.0, latestDetermination.sensitivityRatio == nil, self.debugWatchState {
+                        debug(.watchManager, "⌚️ SensRatio is nil, using default 1.0")
                     }
 
-                    // ISF and eventualBG - stored as Int16 in CoreData (mg/dL values)
-                    // Send raw mg/dL values (no unit conversion)
-                    if let insulinSensitivity = latestDetermination.insulinSensitivity as? Int16 {
-                        // Validate reasonable range for ISF (20-300 mg/dL per unit typical)
-                        if insulinSensitivity > 0, insulinSensitivity <= 300 {
-                            isfValue = insulinSensitivity
-                        } else {
-                            isfValue = nil
-                            if self.debugWatchState {
-                                debug(
-                                    .watchManager,
-                                    "⌚️ ISF out of range (\(insulinSensitivity)), excluding from data"
-                                )
-                            }
-                        }
+                    // ISF validation using helper - stored as Int16 in CoreData (mg/dL values)
+                    isfValue = self.validateISF(latestDetermination.insulinSensitivity)
+                    if isfValue == nil, self.debugWatchState {
+                        debug(.watchManager, "⌚️ ISF out of range or invalid, excluding from data")
                     }
 
-                    // Always calculate eventualBG (watchface decides whether to display it)
-                    if let eventualBG = latestDetermination.eventualBG as? Int16 {
-                        // Validate reasonable range for BG (0-500 mg/dL)
-                        if eventualBG >= 0, eventualBG <= 500 {
-                            eventualBGValue = eventualBG
-                        } else {
-                            eventualBGValue = nil
-                            if self.debugWatchState {
-                                debug(
-                                    .watchManager,
-                                    "⌚️ EventualBG out of range (\(eventualBG)), excluding from data"
-                                )
-                            }
-                        }
+                    // EventualBG validation using helper
+                    eventualBGValue = self.validateEventualBG(latestDetermination.eventualBG)
+                    if eventualBGValue == nil, self.debugWatchState {
+                        debug(.watchManager, "⌚️ EventualBG out of range or invalid, excluding from data")
                     }
                 }
 
@@ -1145,6 +1118,26 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
     /// Always sends to datafield (if exists), only checks status for watchface
     /// - Parameter state: The dictionary representing the watch state to be broadcast.
     private func broadcastStateToWatchApps(_ state: Any) {
+        // Deduplicate: Check if we're sending identical data by hashing the JSON content
+        let currentHash: Int
+        if let jsonData = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
+            currentHash = jsonData.hashValue
+        } else {
+            currentHash = 0 // Fallback if serialization fails
+        }
+
+        lastSentHashLock.lock()
+        let isDuplicate = (lastSentDataHash == currentHash)
+        if !isDuplicate {
+            lastSentDataHash = currentHash
+        }
+        lastSentHashLock.unlock()
+
+        if isDuplicate {
+            debugGarmin("[\(formatTimeForLog())] Garmin: Skipping duplicate broadcast (hash: \(currentHash))")
+            return
+        }
+
         // Update display types in the state before sending (handles cached/throttled data)
         let updatedState = updateDisplayTypesInState(state)
 
@@ -1500,13 +1493,8 @@ extension BaseGarminManager: IQUIOverrideDelegate, IQDeviceEventDelegate, IQAppM
                 return
             }
 
-            // Simple rate limiting: ignore if sent update recently
-            if let lastImmediate = self.lastImmediateSendTime,
-               Date().timeIntervalSince(lastImmediate) < self.statusRequestFilterDuration
-            {
-                debugGarmin(
-                    "[\(self.formatTimeForLog())] Garmin: Status ignored - sent \(Int(Date().timeIntervalSince(lastImmediate)))s ago"
-                )
+            // Use helper to check if we should process this status request
+            guard self.shouldProcessStatusRequest() else {
                 return
             }
 
@@ -1893,8 +1881,19 @@ extension BaseGarminManager {
         return value.roundedDouble(toPlaces: decimalPlaces)
     }
 
-    /// Validates COB value
-    /// - Parameter cob: COB value (Decimal)
+    /// Validates COB value from Int16 (CoreData storage type)
+    /// - Parameter cob: COB value (Int16)
+    /// - Returns: Valid COB value or 0
+    private func validateCOB(_ cob: Int16) -> Double {
+        let cobDouble = Double(cob)
+        guard cobDouble >= 0 else {
+            return 0
+        }
+        return cobDouble
+    }
+
+    /// Validates COB value from Decimal
+    /// - Parameter cob: COB value (Decimal from CoreData)
     /// - Returns: Valid COB value or 0
     private func validateCOB(_ cob: Decimal) -> Double {
         let cobDouble = Double(truncating: cob as NSNumber)
@@ -1910,6 +1909,36 @@ extension BaseGarminManager {
     private func validateIOB(_ iob: Decimal) -> Double {
         let iobDouble = Double(truncating: iob as NSNumber)
         return validateAndFormatNumeric(iobDouble, defaultValue: 0.0, decimalPlaces: 1)
+    }
+
+    /// Validates sensitivity ratio value
+    /// - Parameter sensRatio: Sensitivity ratio NSNumber
+    /// - Returns: Valid sensitivity ratio or 1.0 (default)
+    private func validateSensRatio(_ sensRatio: NSNumber?) -> Double {
+        guard let sensRatio = sensRatio else { return 1.0 }
+        let sensRatioDouble = Double(truncating: sensRatio as NSNumber)
+        guard sensRatioDouble.isFinite, !sensRatioDouble.isNaN, sensRatioDouble > 0 else {
+            return 1.0
+        }
+        return sensRatioDouble.roundedDouble(toPlaces: 2)
+    }
+
+    /// Validates ISF (insulin sensitivity factor) value
+    /// - Parameter insulinSensitivity: ISF value as NSNumber
+    /// - Returns: Valid ISF value (Int16) or nil
+    private func validateISF(_ insulinSensitivity: NSNumber?) -> Int16? {
+        guard let isf = insulinSensitivity as? Int16 else { return nil }
+        guard isf > 0, isf <= 300 else { return nil }
+        return isf
+    }
+
+    /// Validates eventual BG value
+    /// - Parameter eventualBG: Eventual BG value as NSNumber
+    /// - Returns: Valid eventual BG value (Int16) or nil
+    private func validateEventualBG(_ eventualBG: NSNumber?) -> Int16? {
+        guard let bg = eventualBG as? Int16 else { return nil }
+        guard bg >= 0, bg <= 500 else { return nil }
+        return bg
     }
 
     // MARK: - Settings Change Validation
