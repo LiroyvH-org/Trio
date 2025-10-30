@@ -1074,7 +1074,7 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
                 // Register to receive app-messages from the datafield
                 connectIQ?.register(forAppMessages: watchDataFieldApp, delegate: self)
             } else {
-                debugGarmin("Garmin: Could not create data-field app for device \(device.uuid!)")
+                debugGarmin("Garmin: Could not create datafield app for device \(device.uuid!)")
             }
         }
     }
@@ -1105,7 +1105,7 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable, @unchecked S
     /// Subscribes to determination updates with 2s debounce (waits for quiet period, then sends latest)
     /// Also handles IOB updates since they fire simultaneously with determinations
     /// Two-stage debouncing: 2s at CoreData level (skip redundant prep) + 2s here (skip redundant sends)
-    /// Total delay: ~4s from first CoreData save to Bluetooth transmission (faster than old 5s throttle)
+    /// Total delay: ~4s from first CoreData save to Bluetooth transmission (faster than old 10s throttle)
     private func subscribeToDeterminationThrottle() {
         determinationSubject
             .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
@@ -1724,5 +1724,278 @@ extension BaseGarminManager: SettingsObserver {
                 }
             }
         }
+    }
+}
+
+// MARK: - Validation Helpers Extension
+
+extension BaseGarminManager {
+    // MARK: - Glucose Validation
+
+    /// Validates glucose reading and returns the value if valid
+    /// - Parameters:
+    ///   - glucose: GlucoseStored object
+    ///   - maxAgeMinutes: Maximum age in minutes (default: 15)
+    /// - Returns: Valid glucose value (Int16), or nil if invalid
+    private func validateGlucoseReading(
+        _ glucose: GlucoseStored?,
+        maxAgeMinutes: Double = 15
+    ) -> Int16? {
+        guard let glucose = glucose,
+              let glucoseDate = glucose.date
+        else {
+            return nil
+        }
+
+        let age = Date().timeIntervalSince(glucoseDate) / 60
+        guard age <= maxAgeMinutes else {
+            return nil
+        }
+
+        // glucose.glucose is already Int16
+        let glucoseValue = glucose.glucose
+        guard glucoseValue >= 0, glucoseValue <= 500 else {
+            return nil
+        }
+
+        return glucoseValue
+    }
+
+    /// Validates glucose reading with trend information
+    /// - Parameters:
+    ///   - glucose: GlucoseStored object
+    ///   - previousGlucose: Previous GlucoseStored for delta calculation
+    ///   - maxAgeMinutes: Maximum age in minutes (default: 15)
+    /// - Returns: Tuple of (value, delta, direction) if valid, or nil
+    private func validateGlucoseWithTrend(
+        _ glucose: GlucoseStored?,
+        previousGlucose: GlucoseStored?,
+        maxAgeMinutes: Double = 15
+    ) -> (value: Int16, delta: Int16?, direction: String)? {
+        guard let validValue = validateGlucoseReading(glucose, maxAgeMinutes: maxAgeMinutes),
+              let glucose = glucose
+        else {
+            return nil
+        }
+
+        // Calculate delta if previous reading exists
+        let delta: Int16? = {
+            guard let prev = previousGlucose else { return 0 }
+            let deltaValue = glucose.glucose - prev.glucose
+            guard deltaValue >= -100, deltaValue <= 100 else { return nil }
+            return deltaValue
+        }()
+
+        let direction = glucose.direction ?? "--"
+
+        return (value: validValue, delta: delta, direction: direction)
+    }
+
+    // MARK: - Data Freshness Validation
+
+    /// Validates determination data freshness
+    /// - Parameters:
+    ///   - determination: OrefDetermination object
+    ///   - maxAgeMinutes: Maximum age in minutes (default: 15)
+    /// - Returns: True if fresh, false otherwise
+    private func isDeterminationFresh(
+        _ determination: OrefDetermination?,
+        maxAgeMinutes: Double = 15
+    ) -> Bool {
+        guard let determination = determination else { return false }
+
+        // OrefDetermination uses timestamp (not date)
+        guard let timestamp = determination.timestamp else { return false }
+
+        let age = Date().timeIntervalSince(timestamp) / 60
+        return age <= maxAgeMinutes
+    }
+
+    /// Validates timestamp freshness
+    /// - Parameters:
+    ///   - date: Date to validate
+    ///   - maxAgeMinutes: Maximum age in minutes
+    /// - Returns: True if fresh, false otherwise
+    private func isDataFresh(
+        _ date: Date?,
+        maxAgeMinutes: Double
+    ) -> Bool {
+        guard let date = date else {
+            return false
+        }
+
+        let age = Date().timeIntervalSince(date) / 60
+        return age <= maxAgeMinutes
+    }
+
+    // MARK: - App Configuration Validation
+
+    /// Validation result for app configuration
+    private struct AppValidationResult {
+        let shouldProceed: Bool
+        let reason: String
+    }
+
+    /// Validates app installation and configuration status
+    /// - Returns: ValidationResult indicating whether to proceed
+    private func validateAppConfiguration() -> AppValidationResult {
+        let garminSettings = settingsManager.settings.garminSettings
+
+        // Check if datafield is configured (not .none)
+        let hasDatafield = garminSettings.datafield != .none
+
+        // If datafield exists, always proceed (datafield always sends)
+        if hasDatafield {
+            return AppValidationResult(
+                shouldProceed: true,
+                reason: "Datafield configured"
+            )
+        }
+
+        // Only watchface, check if data is enabled
+        if !garminSettings.isWatchfaceDataEnabled {
+            return AppValidationResult(
+                shouldProceed: false,
+                reason: "Watchface data transmission disabled"
+            )
+        }
+
+        return AppValidationResult(
+            shouldProceed: true,
+            reason: "Valid app configuration"
+        )
+    }
+
+    private func shouldSendData() -> Bool {
+        let garminSettings = settingsManager.settings.garminSettings
+
+        // Case 1: Datafield configured - ALWAYS send
+        if garminSettings.datafield != .none {
+            return true
+        }
+
+        // Case 2: Only watchface - check if enabled
+        return garminSettings.isWatchfaceDataEnabled
+    }
+
+    // MARK: - Status Request Validation
+
+    /// Validates if status request should be processed
+    /// - Returns: True if request should be processed, false if filtered
+    private func shouldProcessStatusRequest() -> Bool {
+        guard let lastSend = lastImmediateSendTime else {
+            return true
+        }
+
+        let timeSinceLastSend = Date().timeIntervalSince(lastSend)
+        if timeSinceLastSend < statusRequestFilterDuration {
+            debugGarmin(
+                "Garmin: Ignoring status request - sent data \(Int(timeSinceLastSend))s ago (< \(Int(statusRequestFilterDuration))s filter)"
+            )
+            return false
+        }
+
+        return true
+    }
+
+    // MARK: - Numeric Value Validation
+
+    /// Validates and formats numeric value for display
+    /// - Parameters:
+    ///   - value: Optional double value
+    ///   - defaultValue: Default value if nil or invalid
+    ///   - decimalPlaces: Number of decimal places (default: 1)
+    /// - Returns: Formatted numeric value
+    private func validateAndFormatNumeric(
+        _ value: Double?,
+        defaultValue: Double = 0.0,
+        decimalPlaces: Int = 1
+    ) -> Double {
+        guard let value = value, value.isFinite else {
+            return defaultValue
+        }
+
+        return value.roundedDouble(toPlaces: decimalPlaces)
+    }
+
+    /// Validates COB value
+    /// - Parameter cob: COB value (Decimal)
+    /// - Returns: Valid COB value or 0
+    private func validateCOB(_ cob: Decimal) -> Double {
+        let cobDouble = Double(truncating: cob as NSNumber)
+        guard cobDouble.isFinite, !cobDouble.isNaN, cobDouble >= 0 else {
+            return 0
+        }
+        return cobDouble.roundedDouble(toPlaces: 0)
+    }
+
+    /// Validates IOB value
+    /// - Parameter iob: IOB value (Decimal)
+    /// - Returns: Valid IOB value or 0.0
+    private func validateIOB(_ iob: Decimal) -> Double {
+        let iobDouble = Double(truncating: iob as NSNumber)
+        return validateAndFormatNumeric(iobDouble, defaultValue: 0.0, decimalPlaces: 1)
+    }
+
+    // MARK: - Settings Change Validation
+
+    /// Settings change detection result
+    struct SettingsChange {
+        let watchfaceChanged: Bool
+        let datafieldChanged: Bool
+        let dataType1Changed: Bool
+        let dataType2Changed: Bool
+        let unitsChanged: Bool
+        let enabledChanged: Bool
+    }
+
+    /// Detects which settings have changed
+    /// - Parameter newSettings: New settings to compare against
+    /// - Returns: SettingsChange struct with boolean flags for each change
+    private func detectSettingsChanges(_ newSettings: TrioSettings) -> SettingsChange {
+        let oldSettings = previousGarminSettings
+        let newGarmin = newSettings.garminSettings
+
+        return SettingsChange(
+            watchfaceChanged: oldSettings.watchface != newGarmin.watchface,
+            datafieldChanged: oldSettings.datafield != newGarmin.datafield,
+            dataType1Changed: oldSettings.primaryAttributeChoice != newGarmin.primaryAttributeChoice,
+            dataType2Changed: oldSettings.secondaryAttributeChoice != newGarmin.secondaryAttributeChoice,
+            unitsChanged: units != newSettings.units,
+            enabledChanged: oldSettings.isWatchfaceDataEnabled != newGarmin.isWatchfaceDataEnabled
+        )
+    }
+
+    // MARK: - Cache Validation
+
+    /// Checks if app installation cache is valid
+    /// - Parameter appUUID: UUID of the app to check
+    /// - Returns: Cached status if valid, nil otherwise
+    private func getCachedAppStatus(_ appUUID: String) -> Bool? {
+        appStatusCacheLock.lock()
+        defer { appStatusCacheLock.unlock() }
+
+        guard let cached = appInstallationCache[appUUID] else {
+            return nil
+        }
+
+        let age = Date().timeIntervalSince(cached.lastChecked)
+        guard age < appStatusCacheTimeout else {
+            appInstallationCache.removeValue(forKey: appUUID)
+            return nil
+        }
+
+        return cached.isInstalled
+    }
+
+    /// Updates app installation cache
+    /// - Parameters:
+    ///   - appUUID: UUID of the app
+    ///   - isInstalled: Installation status
+    private func updateAppStatusCache(_ appUUID: String, isInstalled: Bool) {
+        appStatusCacheLock.lock()
+        defer { appStatusCacheLock.unlock() }
+
+        appInstallationCache[appUUID] = (isInstalled: isInstalled, lastChecked: Date())
     }
 }
