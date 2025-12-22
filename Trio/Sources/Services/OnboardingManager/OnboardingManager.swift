@@ -26,7 +26,7 @@ import Swinject
         PropertyPersistentFlags.shared.onboardingCompleted = true
 
         if isFreshTrioInstallation {
-            PropertyPersistentFlags.shared.onboardingCompletedAt? = Date()
+            PropertyPersistentFlags.shared.onboardingCompletedAt = Date()
         }
 
         shouldShowOnboarding = false
