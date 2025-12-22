@@ -22,8 +22,13 @@ import Swinject
     }
 
     /// Marks onboarding as completed and updates the shouldShowOnboarding flag.
-    func completeOnboarding() {
+    func completeOnboarding(_ isFreshTrioInstallation: Bool) {
         PropertyPersistentFlags.shared.onboardingCompleted = true
+
+        if isFreshTrioInstallation {
+            PropertyPersistentFlags.shared.onboardingCompletedAt? = Date()
+        }
+
         shouldShowOnboarding = false
     }
 

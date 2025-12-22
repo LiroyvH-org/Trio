@@ -208,6 +208,27 @@ final class OpenAPS {
                 dtos.insert(simulatedBolusDTO, at: 0)
             }
 
+            /// This condition addresses https://github.com/nightscout/Trio/issues/898
+            /// It inject a mock suspend for fresh installs that are still within the insulin action duration window.
+            /// Trio's onboarding completion time (or shortly thereafter; technically once a pump is added)
+            /// marks the start of pump connectivity; without real history, IOB would otherwise start from a resume-only state
+            /// and can go negative.
+            /// By backdating a suspend one second before onboarding completion, we give oref a safe baseline
+            /// when no prior pump events exist.
+            if let onboardingCompletedAt = PropertyPersistentFlags.shared.onboardingCompletedAt,
+               let pumpSettings = self.storage.retrieve(
+                   OpenAPS.Settings.settings,
+                   as: PumpSettings.self
+               )
+            {
+                let durationOfInsulinActionWindow = (pumpSettings.insulinActionCurve as NSDecimalNumber).doubleValue * 60 * 60
+                if Date().timeIntervalSince(onboardingCompletedAt) <= durationOfInsulinActionWindow {
+                    let suspendDate = onboardingCompletedAt.addingTimeInterval(-1)
+                    let suspendDTO = self.createSimulatedSuspendDTO(at: suspendDate)
+                    dtos.insert(suspendDTO, at: 0)
+                }
+            }
+
             // Convert the DTOs to JSON
             return self.jsonConverter.convertToJSON(dtos)
         }
@@ -274,6 +295,16 @@ final class OpenAPS {
             _type: "Bolus"
         )
         return .bolus(bolusDTO)
+    }
+
+    private func createSimulatedSuspendDTO(at date: Date) -> PumpEventDTO {
+        let dateFormatted = PumpEventStored.dateFormatter.string(from: date)
+
+        let suspendDTO = SuspendDTO(
+            id: UUID().uuidString,
+            timestamp: dateFormatted
+        )
+        return .suspend(suspendDTO)
     }
 
     func determineBasal(
