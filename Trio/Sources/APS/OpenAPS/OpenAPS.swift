@@ -209,6 +209,8 @@ final class OpenAPS {
             }
 
             // This condition addresses https://github.com/nightscout/Trio/issues/898
+            // If onboardingCompletedAt is present, we know it is a fresh install,
+            // as we only store this computed timestamp for new Trio users.
             // Fresh installs usually do not have any pump history, so the first
             // event after onboarding is typically a PumpResume. Without a preceding
             // suspend, oref interprets the time between midnight and onboarding as lacking
