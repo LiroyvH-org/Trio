@@ -213,6 +213,16 @@ enum PumpEventDTO: Encodable {
             try prime.encode(to: encoder)
         }
     }
+
+    var isResume: Bool {
+        if case .resume = self { return true }
+        return false
+    }
+
+    var isSuspend: Bool {
+        if case .suspend = self { return true }
+        return false
+    }
 }
 
 // Extension with helper functions to map pump events to DTO objects via uniform masking enum
