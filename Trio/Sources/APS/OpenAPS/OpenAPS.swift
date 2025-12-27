@@ -208,11 +208,6 @@ final class OpenAPS {
                 dtos.insert(simulatedBolusDTO, at: 0)
             }
 
-            // FIXME: remove this; for testing only
-//            let datae60minAgo = Date().addingTimeInterval(-3600)
-//            let simulatedResumeDTO = self.createResumeDTO(at: datae60minAgo)
-//            dtos.insert(simulatedResumeDTO, at: 0)
-
             // This condition addresses https://github.com/nightscout/Trio/issues/898
             // Within the last 24h of pump history, resumes can appear
             // without a preceding suspend (freshly onboarded user, pump reconnection, …).
@@ -221,8 +216,7 @@ final class OpenAPS {
             // 1 second before the resume event. This backstop avoids oref starting from a
             // resume-only state that can drive negative IOB while keeping real history intact.
             if let pumpSettings = self.storage.retrieve(OpenAPS.Settings.settings, as: PumpSettings.self) {
-                let diaWindowSeconds = (pumpSettings.insulinActionCurve as NSDecimalNumber).doubleValue * 60 * 60
-                let diaWindow: TimeInterval = diaWindowSeconds
+                let insulinDurationWindowSeconds = (pumpSettings.insulinActionCurve as NSDecimalNumber).doubleValue * 60 * 60
                 let oneDaySeconds: TimeInterval = 24 * 60 * 60
                 let now = Date()
 
@@ -233,18 +227,18 @@ final class OpenAPS {
 
                 let recentDTOs = datedDTOs.filter { now.timeIntervalSince($0.1) <= oneDaySeconds }
                 if let resumeIndex = recentDTOs.firstIndex(where: { tuple in
-                    tuple.0.isResume && now.timeIntervalSince(tuple.1) <= diaWindow
+                    tuple.0.isResume && now.timeIntervalSince(tuple.1) <= insulinDurationWindowSeconds
                 }) {
                     let resumeDate = recentDTOs[resumeIndex].1
 
                     let hasSuspendInDIAWindowBeforeResume = recentDTOs[..<resumeIndex].contains { element in
-                        element.0.isSuspend && now.timeIntervalSince(element.1) <= diaWindow
+                        element.0.isSuspend && now.timeIntervalSince(element.1) <= insulinDurationWindowSeconds
                     }
 
                     if !hasSuspendInDIAWindowBeforeResume {
                         let hasSuspendInOlderWindow = recentDTOs.contains { element in
                             element.0.isSuspend
-                                && now.timeIntervalSince(element.1) > diaWindow
+                                && now.timeIntervalSince(element.1) > insulinDurationWindowSeconds
                                 && now.timeIntervalSince(element.1) <= oneDaySeconds
                         }
 
@@ -328,17 +322,6 @@ final class OpenAPS {
             _type: "Bolus"
         )
         return .bolus(bolusDTO)
-    }
-
-    // FIXME: remove this; for testing only
-    private func createResumeDTO(at date: Date) -> PumpEventDTO {
-        let dateFormatted = PumpEventStored.dateFormatter.string(from: date)
-
-        let resumeDTO = ResumeDTO(
-            id: UUID().uuidString,
-            timestamp: dateFormatted
-        )
-        return .resume(resumeDTO)
     }
 
     private func createSimulatedSuspendDTO(at date: Date) -> PumpEventDTO {
