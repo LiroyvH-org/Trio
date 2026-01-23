@@ -13,8 +13,13 @@ import SwiftUI
 /// Uses the SwissAlpine xDrip+ compatible data format.
 /// Sent as an array where the first entry contains all extended data fields.
 struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
-    /// Timestamp of the glucose reading in milliseconds since Unix epoch
+    /// Timestamp of the enacted loop determination in milliseconds since Unix epoch
+    /// Shows when the loop actually executed, used to indicate loop staleness
     var date: UInt64?
+
+    /// Timestamp of the glucose reading in milliseconds since Unix epoch
+    /// Used by watchface to determine glucose freshness for coloring logic
+    var glucoseDate: UInt64?
 
     /// Sensor glucose value in raw mg/dL (no unit conversion applied)
     var sgv: Int16?
@@ -61,6 +66,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     static func == (lhs: GarminWatchState, rhs: GarminWatchState) -> Bool {
         lhs.date == rhs.date &&
+            lhs.glucoseDate == rhs.glucoseDate &&
             lhs.sgv == rhs.sgv &&
             lhs.delta == rhs.delta &&
             lhs.direction == rhs.direction &&
@@ -78,6 +84,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(date)
+        hasher.combine(glucoseDate)
         hasher.combine(sgv)
         hasher.combine(delta)
         hasher.combine(direction)
@@ -95,6 +102,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     enum CodingKeys: String, CodingKey {
         case date
+        case glucoseDate
         case sgv
         case delta
         case direction
@@ -115,6 +123,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(date, forKey: .date)
+        try container.encodeIfPresent(glucoseDate, forKey: .glucoseDate)
         try container.encodeIfPresent(sgv, forKey: .sgv)
         try container.encodeIfPresent(delta, forKey: .delta)
         try container.encodeIfPresent(direction, forKey: .direction)
