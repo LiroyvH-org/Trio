@@ -140,6 +140,70 @@ final class BaseCarbsStorage: CarbsStorage, Injectable {
 
      - Returns: A tuple containing the array of future carb entries and the total carb equivalents.
      */
+//    private func processFPU(
+//        entries: [CarbsEntry],
+//        fat: Decimal,
+//        protein: Decimal,
+//        createdAt: Date,
+//        actualDate: Date?
+//    ) -> ([CarbsEntry], Decimal) {
+//        let trioSettings = settings.settings
+//        let providerSettings = settingsProvider.settings
+//
+//        let interval = trioSettings.minuteInterval.clamp(to: providerSettings.minuteInterval)
+//        let timeCap = trioSettings.timeCap.clamp(to: providerSettings.timeCap)
+//        let adjustment = trioSettings.individualAdjustmentFactor.clamp(to: providerSettings.individualAdjustmentFactor)
+//        let delay = trioSettings.delay.clamp(to: providerSettings.delay)
+//
+//        let kcal = protein * 4 + fat * 9
+//        let carbEquivalents = (kcal / 10) * adjustment
+//        let fpus = carbEquivalents / 10
+//        var computedDuration = calculateComputedDuration(fpus: fpus, timeCap: timeCap)
+//
+//        var carbEquivalentSize: Decimal = carbEquivalents / computedDuration
+//        carbEquivalentSize /= Decimal(60) / interval
+//
+//        if carbEquivalentSize < 1.0 {
+//            carbEquivalentSize = 1.0
+//            computedDuration = min(carbEquivalents / carbEquivalentSize, timeCap)
+//        }
+//
+//        let roundedEquivalent: Double = round(Double(carbEquivalentSize * 10)) / 10
+//        carbEquivalentSize = Decimal(roundedEquivalent)
+//        var numberOfEquivalents = carbEquivalents / carbEquivalentSize
+//
+//        var useDate = actualDate ?? createdAt
+//        let fpuID = entries.first?.fpuID ?? UUID().uuidString
+//        var futureCarbArray = [CarbsEntry]()
+//        var firstIndex = true
+//
+//        // convert Decimal minutes to TimeInterval in seconds
+//        let delayTimeInterval = TimeInterval(delay * 60)
+//        let intervalTimeInterval = TimeInterval(interval * 60)
+//        while carbEquivalents > 0, numberOfEquivalents > 0 {
+//            useDate = firstIndex ? useDate.addingTimeInterval(delayTimeInterval) : useDate
+//                .addingTimeInterval(intervalTimeInterval)
+//            firstIndex = false
+    // g
+//            let eachCarbEntry = CarbsEntry(
+//                id: UUID().uuidString,
+//                createdAt: createdAt,
+//                actualDate: useDate,
+//                carbs: carbEquivalentSize,
+//                fat: 0,
+//                protein: 0,
+//                note: nil,
+//                enteredBy: CarbsEntry.local,
+//                isFPU: true,
+//                fpuID: fpuID
+//            )
+//            futureCarbArray.append(eachCarbEntry)
+//            numberOfEquivalents -= 1
+//        }
+//
+//        return (futureCarbArray, carbEquivalents)
+//    }
+
     private func processFPU(
         entries: [CarbsEntry],
         fat: Decimal,
@@ -147,49 +211,48 @@ final class BaseCarbsStorage: CarbsStorage, Injectable {
         createdAt: Date,
         actualDate: Date?
     ) -> ([CarbsEntry], Decimal) {
-        let trioSettings = settings.settings
-        let providerSettings = settingsProvider.settings
+        let trio = settings.settings
+        let provider = settingsProvider.settings
 
-        let interval = trioSettings.minuteInterval.clamp(to: providerSettings.minuteInterval)
-        let timeCap = trioSettings.timeCap.clamp(to: providerSettings.timeCap)
-        let adjustment = trioSettings.individualAdjustmentFactor.clamp(to: providerSettings.individualAdjustmentFactor)
-        let delay = trioSettings.delay.clamp(to: providerSettings.delay)
+        let adjustment = trio.individualAdjustmentFactor
+            .clamp(to: provider.individualAdjustmentFactor)
 
+        let delayMinutes = trio.delay
+            .clamp(to: provider.delay)
+
+        // Constraints
+        let maxTotalGrams = 99
+        let maxEntries = 3
+        let maxPerEntry = 33
+        let minPerEntry = 10
+        let spacing: TimeInterval = 30 * 60
+
+        // kcal -> carb equivalents (kcal/10 * adjustment), rounded down to whole grams
         let kcal = protein * 4 + fat * 9
-        let carbEquivalents = (kcal / 10) * adjustment
-        let fpus = carbEquivalents / 10
-        var computedDuration = calculateComputedDuration(fpus: fpus, timeCap: timeCap)
+        let rawEquivalents = Int((kcal / 10) * adjustment)
+        let totalGrams = min(maxTotalGrams, max(0, rawEquivalents))
 
-        var carbEquivalentSize: Decimal = carbEquivalents / computedDuration
-        carbEquivalentSize /= Decimal(60) / interval
-
-        if carbEquivalentSize < 1.0 {
-            carbEquivalentSize = 1.0
-            computedDuration = min(carbEquivalents / carbEquivalentSize, timeCap)
+        guard totalGrams >= minPerEntry else {
+            return ([], Decimal(totalGrams))
         }
 
-        let roundedEquivalent: Double = round(Double(carbEquivalentSize * 10)) / 10
-        carbEquivalentSize = Decimal(roundedEquivalent)
-        var numberOfEquivalents = carbEquivalents / carbEquivalentSize
+        let amounts = splitIntoCarbEquivalents(
+            total: totalGrams,
+            maxEntries: maxEntries,
+            maxPerEntry: maxPerEntry,
+            minPerEntry: minPerEntry
+        )
 
-        var useDate = actualDate ?? createdAt
+        let baseDate = actualDate ?? createdAt
+        let start = baseDate.addingTimeInterval(TimeInterval(delayMinutes * 60))
         let fpuID = entries.first?.fpuID ?? UUID().uuidString
-        var futureCarbArray = [CarbsEntry]()
-        var firstIndex = true
 
-        // convert Decimal minutes to TimeInterval in seconds
-        let delayTimeInterval = TimeInterval(delay * 60)
-        let intervalTimeInterval = TimeInterval(interval * 60)
-        while carbEquivalents > 0, numberOfEquivalents > 0 {
-            useDate = firstIndex ? useDate.addingTimeInterval(delayTimeInterval) : useDate
-                .addingTimeInterval(intervalTimeInterval)
-            firstIndex = false
-
-            let eachCarbEntry = CarbsEntry(
+        let futureEntries: [CarbsEntry] = amounts.enumerated().map { idx, grams in
+            CarbsEntry(
                 id: UUID().uuidString,
                 createdAt: createdAt,
-                actualDate: useDate,
-                carbs: carbEquivalentSize,
+                actualDate: start.addingTimeInterval(TimeInterval(idx) * spacing),
+                carbs: Decimal(grams),
                 fat: 0,
                 protein: 0,
                 note: nil,
@@ -197,11 +260,52 @@ final class BaseCarbsStorage: CarbsStorage, Injectable {
                 isFPU: true,
                 fpuID: fpuID
             )
-            futureCarbArray.append(eachCarbEntry)
-            numberOfEquivalents -= 1
         }
 
-        return (futureCarbArray, carbEquivalents)
+        let totalScheduled = futureEntries.reduce(into: Decimal(0)) { $0 += $1.carbs }
+        return (futureEntries, totalScheduled)
+    }
+
+    // MARK: - Helpers
+
+    private func splitIntoCarbEquivalents(
+        total: Int,
+        maxEntries: Int,
+        maxPerEntry: Int,
+        minPerEntry: Int
+    ) -> [Int] {
+        guard total >= minPerEntry else { return [] }
+
+        // Choose an entry count that *guarantees* each entry can be <= maxPerEntry
+        let needed = (total + maxPerEntry - 1) / maxPerEntry
+        let count = min(maxEntries, max(1, needed))
+
+        // Even split (difference between buckets is at most 1)
+        func evenSplit(_ total: Int, count: Int) -> [Int] {
+            let base = total / count
+            let rem = total % count
+            return (0 ..< count).map { base + ($0 < rem ? 1 : 0) }
+        }
+
+        var buckets = evenSplit(total, count: count)
+
+        // Enforce minPerEntry by merging any too-small tail bucket into the previous one
+        // This should be rare, but it keeps the invariant
+        if buckets.count > 1 {
+            for i in stride(from: buckets.count - 1, through: 1, by: -1) {
+                let v = buckets[i]
+                guard v > 0, v < minPerEntry else { continue }
+                buckets[i - 1] += v
+                buckets[i] = 0
+            }
+            buckets = buckets.filter { $0 > 0 }
+        }
+
+        // Guarantee not to exceed maxPerEntry if merging a reduced count
+        // Clamp as final guard here
+        buckets = buckets.map { min(maxPerEntry, $0) }.filter { $0 >= minPerEntry }
+
+        return buckets
     }
 
     private func saveCarbEquivalents(entries: [CarbsEntry], areFetchedFromRemote: Bool) async {
