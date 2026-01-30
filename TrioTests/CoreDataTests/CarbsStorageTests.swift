@@ -132,19 +132,19 @@ import Testing
         // Defaults:
         // adjustment = 0.5, delay = 60
         //
-        // fat=10g -> 90 kcal
-        // protein=80g -> 320 kcal
-        // kcal total = 410
-        // (kcal/10) = 41
-        // 41 * 0.5 = 20.5
-        // Int(20.5) = 20 equivalents -> single FPU entry: 20g
+        // fat=50g -> 450 kcal
+        // protein=100g -> 400 kcal
+        // kcal total = 850
+        // (kcal/10) = 85
+        // 85 * 0.5 = 42.5
+        // Int(42.5) = 42 equivalents -> two FPU entries: 21g each
         let mealEntry = CarbsEntry(
             id: UUID().uuidString,
             createdAt: baseDate,
             actualDate: baseDate,
             carbs: 30,
-            fat: 10,
-            protein: 80,
+            fat: 50,
+            protein: 100,
             note: "FPU deterministic default split test",
             enteredBy: "Test",
             isFPU: false,
@@ -170,12 +170,12 @@ import Testing
         let originalCarbEntry = storedEntries.first(where: { $0.isFPU == false })
         #expect(originalCarbEntry != nil, "Should have one non-FPU original entry")
         #expect(originalCarbEntry?.carbs == 30, "Original carbs should match")
-        #expect(originalCarbEntry?.fat == 10, "Original fat should match")
-        #expect(originalCarbEntry?.protein == 80, "Original protein should match")
+        #expect(originalCarbEntry?.fat == 50, "Original fat should match")
+        #expect(originalCarbEntry?.protein == 100, "Original protein should match")
 
         let fpuEntries = storedEntries.filter { $0.isFPU == true }
-        #expect(fpuEntries.count == 1, "Expected exactly one FPU entry under default settings")
-        #expect(Int(fpuEntries[0].carbs) == 20, "Expected 20g carb equivalents under default settings")
+        #expect(fpuEntries.count == 2, "Expected exactly one FPU entry under default settings")
+        #expect(Int(fpuEntries[0].carbs) == 21, "Expected 20g carb equivalents under default settings")
 
         for fpuEntry in fpuEntries {
             #expect(fpuEntry.fat == 0, "FPU fat must be 0")
@@ -194,7 +194,7 @@ import Testing
         // - first FPU entry must be at least +60m after the *input* timestamp (createdAt/actualDate),
         //   but storage may choose a different internal baseDate, so don't assert exact equality.
         let fpuDates = fpuEntries.compactMap(\.date).sorted()
-        #expect(fpuDates.count == 1, "FPU entry should have a date")
+        #expect(fpuDates.count == 2, "FPU entry should have a date")
 
         let firstFpuDate = fpuDates[0]
         #expect(
