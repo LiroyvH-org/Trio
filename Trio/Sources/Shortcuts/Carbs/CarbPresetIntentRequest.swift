@@ -1,7 +1,7 @@
 import CoreData
 import Foundation
 
-@available(iOS 16.0,*) final class CarbPresetIntentRequest: BaseIntentsRequest {
+final class CarbPresetIntentRequest: BaseIntentsRequest {
     func addCarbs(
         _ quantityCarbs: Double,
         _ quantityFat: Double,
