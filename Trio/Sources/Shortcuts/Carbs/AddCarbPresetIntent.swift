@@ -122,9 +122,19 @@ struct AddCarbPresetIntent: AppIntent {
             }
 
             if confirmBeforeApplying {
+                var confirmationMessage: String
+                confirmationMessage = String(localized: "Add \(quantityCarbs) g carbs")
+                if fatQuantity > 0 {
+                    confirmationMessage = String(localized: "\(confirmationMessage) and \(fatQuantity) g fat")
+                }
+                if proteinQuantity > 0 {
+                    confirmationMessage = String(localized: "\(confirmationMessage) and \(proteinQuantity) g protein")
+                }
+                confirmationMessage = String(localized: "\(confirmationMessage)?")
+
                 try await requestConfirmation(
                     result: .result(
-                        dialog: IntentDialog(stringLiteral: String(localized: "Add \(quantityCarbs) grams of carbs?"))
+                        dialog: IntentDialog(stringLiteral: confirmationMessage)
                     )
                 )
             }
