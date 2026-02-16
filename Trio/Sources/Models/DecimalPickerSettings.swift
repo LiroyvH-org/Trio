@@ -51,7 +51,7 @@ struct DecimalPickerSettings {
     var overrideFactor = PickerSetting(value: 0.8, step: 0.05, min: 0.05, max: 1.5, type: PickerSetting.PickerSettingType.factor)
     var fattyMealFactor = PickerSetting(value: 0.7, step: 0.05, min: 0.05, max: 1, type: PickerSetting.PickerSettingType.factor)
     var sweetMealFactor = PickerSetting(value: 1, step: 0.05, min: 0.05, max: 2, type: PickerSetting.PickerSettingType.factor)
-    var maxIOB = PickerSetting(value: 0, step: 1, min: 0, max: 20, type: PickerSetting.PickerSettingType.insulinUnit)
+    var maxIOB = PickerSetting(value: 0, step: 1, min: 0, max: 30, type: PickerSetting.PickerSettingType.insulinUnit)
     var maxDailySafetyMultiplier = PickerSetting(
         value: 3,
         step: 0.1,
@@ -78,7 +78,7 @@ struct DecimalPickerSettings {
     )
     var maxCOB = PickerSetting(value: 120, step: 5, min: 0, max: 300, type: PickerSetting.PickerSettingType.gram)
     var maxMealAbsorptionTime = PickerSetting(value: 6, step: 1, min: 4, max: 10, type: PickerSetting.PickerSettingType.hour)
-    var min5mCarbimpact = PickerSetting(value: 8, step: 1, min: 1, max: 20, type: PickerSetting.PickerSettingType.glucose)
+    var min5mCarbimpact = PickerSetting(value: 8, step: 1, min: 1, max: 36, type: PickerSetting.PickerSettingType.glucose)
     var remainingCarbsFraction = PickerSetting(
         value: 1.0,
         step: 0.05,
