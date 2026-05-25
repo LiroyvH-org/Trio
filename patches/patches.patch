@@ -1,20 +1,17 @@
-From b9aec8a1dae1f2c70dc99f26cfe05337bb5779d4 Mon Sep 17 00:00:00 2001
-Subject: Add app display name and icon configuration
-
 diff --git a/ConfigOverride.xcconfig b/ConfigOverride.xcconfig
 new file mode 100644
-index 0000000000..2a50e1e661
+index 000000000..2a50e1e66
 --- /dev/null
 +++ b/ConfigOverride.xcconfig
 @@ -0,0 +1,2 @@
 +APP_DISPLAY_NAME = Pancreas
 +APP_ICON = catWithPod
-
 diff --git a/Trio/Sources/Models/DecimalPickerSettings.swift b/Trio/Sources/Models/DecimalPickerSettings.swift
-index c7d9ccead6..e794694a31 100644
+index 6da8b4c48..766c36ff5 100644
 --- a/Trio/Sources/Models/DecimalPickerSettings.swift
 +++ b/Trio/Sources/Models/DecimalPickerSettings.swift
-@@ -75,10 +75,10 @@ struct DecimalPickerSettings {
+@@ -78,7 +78,7 @@ struct DecimalPickerSettings {
+     )
      var maxCOB = PickerSetting(value: 120, step: 5, min: 0, max: 300, type: PickerSetting.PickerSettingType.gram)
      var maxMealAbsorptionTime = PickerSetting(value: 6, step: 1, min: 4, max: 10, type: PickerSetting.PickerSettingType.hour)
 -    var min5mCarbimpact = PickerSetting(value: 8, step: 1, min: 1, max: 20, type: PickerSetting.PickerSettingType.glucose)
@@ -22,6 +19,3 @@ index c7d9ccead6..e794694a31 100644
      var remainingCarbsFraction = PickerSetting(
          value: 1.0,
          step: 0.05,
-         min: 0,
-         max: 1
-     )
