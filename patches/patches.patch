@@ -14,7 +14,7 @@ diff --git a/Trio/Sources/Models/DecimalPickerSettings.swift b/Trio/Sources/Mode
 index c7d9ccead6..e794694a31 100644
 --- a/Trio/Sources/Models/DecimalPickerSettings.swift
 +++ b/Trio/Sources/Models/DecimalPickerSettings.swift
-@@ -78,7 +78,7 @@ struct DecimalPickerSettings {
+@@ -75,10 +75,10 @@ struct DecimalPickerSettings {
      var maxCOB = PickerSetting(value: 120, step: 5, min: 0, max: 300, type: PickerSetting.PickerSettingType.gram)
      var maxMealAbsorptionTime = PickerSetting(value: 6, step: 1, min: 4, max: 10, type: PickerSetting.PickerSettingType.hour)
 -    var min5mCarbimpact = PickerSetting(value: 8, step: 1, min: 1, max: 20, type: PickerSetting.PickerSettingType.glucose)
@@ -22,3 +22,6 @@ index c7d9ccead6..e794694a31 100644
      var remainingCarbsFraction = PickerSetting(
          value: 1.0,
          step: 0.05,
+         min: 0,
+         max: 1
+     )
